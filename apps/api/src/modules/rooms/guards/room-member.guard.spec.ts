@@ -1,4 +1,9 @@
-import { ForbiddenException, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import type { ExecutionContext } from '@nestjs/common';
 import type { PrismaClient } from '@chat/database';
 import { RoomMemberGuard } from './room-member.guard.js';
@@ -61,12 +66,12 @@ describe('RoomMemberGuard', () => {
     expect(prisma.roomMember.findFirst).not.toHaveBeenCalled();
   });
 
-  it('throws 404 ROOM_NOT_FOUND for a missing or non-string route param, without querying', async () => {
+  it('throws 400 INVALID_ROOM_ID for a missing or non-string route param, without querying', async () => {
     for (const params of [{}, { roomId: [ROOM_ID] }, { roomId: '' }]) {
       const promise = guard.canActivate(makeContext({ sub: USER_ID }, params));
 
-      await expect(promise).rejects.toBeInstanceOf(NotFoundException);
-      await expect(promise).rejects.toThrow('ROOM_NOT_FOUND');
+      await expect(promise).rejects.toBeInstanceOf(BadRequestException);
+      await expect(promise).rejects.toThrow('INVALID_ROOM_ID');
     }
     expect(prisma.room.findUnique).not.toHaveBeenCalled();
   });
