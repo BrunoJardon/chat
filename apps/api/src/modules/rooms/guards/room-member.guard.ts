@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   CanActivate,
   ExecutionContext,
   ForbiddenException,
@@ -10,6 +11,7 @@ import {
 import type { PrismaClient } from '@chat/database';
 import { PRISMA_CLIENT } from '../../../core/database/prisma.constants.js';
 import { AuthenticatedRequest } from '../../auth/guards/jwt-auth.guard.js';
+import { isUUID } from 'class-validator';
 
 @Injectable()
 export class RoomMemberGuard implements CanActivate {
@@ -24,8 +26,8 @@ export class RoomMemberGuard implements CanActivate {
     const roomId = req.params.roomId;
     const userId = req.user;
 
-    if (typeof roomId !== 'string' || roomId.length === 0) {
-      throw new NotFoundException('ROOM_NOT_FOUND');
+    if (typeof roomId !== 'string' || roomId.length === 0 || !isUUID(roomId)) {
+      throw new BadRequestException('INVALID_ROOM_ID');
     }
 
     if (!userId?.sub) {
