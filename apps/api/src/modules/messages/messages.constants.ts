@@ -1,0 +1,1 @@
+export const PAGINATION_TAKEN_LIMIT = 50;
