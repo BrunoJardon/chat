@@ -18,4 +18,4 @@ export interface RoomSummary {
 export type RoomDetail = RoomSummary;
 
 export type RoomErrorCode =
-  'NOT_ROOM_MEMBER' | 'ROOM_NOT_FOUND' | 'USER_NOT_FOUND' | 'SELF_PARTICIPANT';
+  'NOT_ROOM_MEMBER' | 'ROOM_NOT_FOUND' | 'USER_NOT_FOUND' | 'SELF_PARTICIPANT' | 'INVALID_ROOM_ID';
