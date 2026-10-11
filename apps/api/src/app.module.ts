@@ -9,6 +9,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard.js';
 import { UsersModule } from './modules/users/users.module.js';
 import { RoomsModule } from './modules/rooms/rooms.module.js';
+import { MessagesModule } from './modules/messages/messages.module.js';
 
 @Module({
   providers: [
@@ -29,6 +30,7 @@ import { RoomsModule } from './modules/rooms/rooms.module.js';
     AuthModule,
     UsersModule,
     RoomsModule,
+    MessagesModule,
   ],
 })
 export class AppModule {}
