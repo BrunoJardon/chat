@@ -7,5 +7,6 @@ import { RoomsModule } from '../rooms/rooms.module.js';
   controllers: [MessagesController],
   providers: [MessagesService],
   imports: [RoomsModule],
+  exports: [MessagesService],
 })
 export class MessagesModule {}
