@@ -29,6 +29,17 @@ export class RoomsService {
     };
   }
 
+  async isMember(roomId: string, userId: string) {
+    const userInRoom = await this.prisma.roomMember.findFirst({
+      where: { roomId: roomId, userId: userId },
+    });
+    if (!userInRoom) {
+      return false;
+    }
+
+    return true;
+  }
+
   async getRoomDetails(roomId: string): Promise<RoomDetail> {
     const room = await this.prisma.room.findUnique({
       where: { id: roomId },

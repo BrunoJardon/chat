@@ -1,0 +1,129 @@
+import { BadRequestException, Logger } from '@nestjs/common';
+import {
+  ConnectedSocket,
+  MessageBody,
+  SubscribeMessage,
+  WebSocketGateway,
+  WebSocketServer,
+} from '@nestjs/websockets';
+import type { Server, Socket } from 'socket.io';
+import { EVENT_NAMES, type ServerErrorCodeEvent, type ServerNewMessageEvent } from '@chat/types';
+import { Public } from '../auth/decorators/public.decorator.js';
+import { JwtService } from '../auth/jwt/jwt.service.js';
+import { MessagesService } from '../messages/messages.service.js';
+import { RoomsService } from '../rooms/rooms.service.js';
+import { ClientSendMessageEventDto } from './dto/client-send-message.dto.js';
+import { ClientJoinRoomEventDto, ClientLeaveRoomEventDto } from './dto/join-leave-room.dto.js';
+
+@Public()
+@WebSocketGateway({
+  cors: { origin: '*' },
+  pingInterval: 60000,
+  pingTimeout: 45000,
+})
+export class ChatGateway {
+  private readonly logger = new Logger(ChatGateway.name);
+
+  @WebSocketServer()
+  private readonly io!: Server;
+
+  constructor(
+    private readonly jwt: JwtService,
+    private readonly messages: MessagesService,
+    private readonly rooms: RoomsService,
+  ) {}
+
+  async handleConnection(socket: Socket): Promise<void> {
+    // token header as fallback for Postman compatibility (temp)
+    const userAccessToken: unknown =
+      socket.handshake.auth?.token || socket.handshake.headers?.token;
+
+    if (typeof userAccessToken !== 'string' || userAccessToken.length === 0) {
+      socket.emit(
+        EVENT_NAMES.server.error,
+        { code: 'UNAUTHORIZED' } satisfies ServerErrorCodeEvent,
+        () => {
+          socket.disconnect(true);
+        },
+      );
+      return;
+    }
+
+    let userId: string;
+    try {
+      const { payload } = await this.jwt.verifyAccess(userAccessToken);
+      userId = payload.sub;
+      socket.data.userId = userId;
+    } catch {
+      socket.emit(
+        EVENT_NAMES.server.error,
+        { code: 'UNAUTHORIZED' } satisfies ServerErrorCodeEvent,
+        () => {
+          socket.disconnect(true);
+        },
+      );
+      return;
+    }
+  }
+
+  @SubscribeMessage(EVENT_NAMES.client.joinRoom)
+  async handleJoinRoom(
+    @ConnectedSocket() socket: Socket,
+    @MessageBody() body: ClientJoinRoomEventDto,
+  ): Promise<void> {
+    const userId: string = socket.data.userId;
+
+    const isMember = await this.rooms.isMember(body.roomId, userId);
+    if (!isMember) {
+      socket.emit(EVENT_NAMES.server.error, {
+        code: 'NOT_ROOM_MEMBER',
+      } satisfies ServerErrorCodeEvent);
+      return;
+    }
+
+    await socket.join(body.roomId);
+  }
+
+  @SubscribeMessage(EVENT_NAMES.client.leaveRoom)
+  async handleLeaveRoom(
+    @ConnectedSocket() socket: Socket,
+    @MessageBody() body: ClientLeaveRoomEventDto,
+  ): Promise<void> {
+    await socket.leave(body.roomId);
+  }
+
+  @SubscribeMessage(EVENT_NAMES.client.sendMessage)
+  async handleClientSendMessage(
+    @ConnectedSocket() socket: Socket,
+    @MessageBody() body: ClientSendMessageEventDto,
+  ): Promise<void> {
+    const userId: string = socket.data.userId;
+
+    const isMember = await this.rooms.isMember(body.roomId, userId);
+    if (!isMember) {
+      socket.emit(EVENT_NAMES.server.error, {
+        code: 'NOT_ROOM_MEMBER',
+      } satisfies ServerErrorCodeEvent);
+
+      return;
+    }
+
+    try {
+      const message = await this.messages.createMessage(body.roomId, userId, body);
+      this.io
+        .to(body.roomId)
+        .emit(EVENT_NAMES.server.newMessage, { message } satisfies ServerNewMessageEvent);
+    } catch (err) {
+      if (err instanceof BadRequestException) {
+        socket.emit(EVENT_NAMES.server.error, {
+          code: 'EMPTY_MESSAGE',
+        } satisfies ServerErrorCodeEvent);
+      } else {
+        this.logger.error(`[message:send] failed for room ${body.roomId}: ${String(err)}`);
+        socket.emit(EVENT_NAMES.server.error, {
+          code: 'INTERNAL_ERROR',
+        } satisfies ServerErrorCodeEvent);
+      }
+    }
+  }
+}
