@@ -6,10 +6,12 @@ export const EVENT_NAMES = {
     joinRoom: 'room:join',
     leaveRoom: 'room:leave',
     sendMessage: 'message:send',
+    typingSet: 'typing:set',
   },
 
   server: {
     newMessage: 'message:new',
+    typingUpdate: 'typing:update',
     error: 'event:error',
   },
 } as const;
@@ -31,6 +33,17 @@ export interface ClientSendMessageEvent {
 
 export interface ServerNewMessageEvent {
   readonly message: MessageDto;
+}
+
+export interface ClientIsTypingEvent {
+  readonly roomId: string;
+  readonly isTyping: boolean;
+}
+
+export interface ServerParticipantIsTypingEvent {
+  readonly roomId: string;
+  readonly userId: string;
+  readonly isTyping: boolean;
 }
 
 export type EventErrorCode = MessageErrorCode | RoomErrorCode | 'UNAUTHORIZED' | 'INTERNAL_ERROR';
