@@ -10,6 +10,7 @@ import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard.js';
 import { UsersModule } from './modules/users/users.module.js';
 import { RoomsModule } from './modules/rooms/rooms.module.js';
 import { MessagesModule } from './modules/messages/messages.module.js';
+import { GatewayModule } from './modules/gateway/gateway.module.js';
 
 @Module({
   providers: [
@@ -31,6 +32,7 @@ import { MessagesModule } from './modules/messages/messages.module.js';
     UsersModule,
     RoomsModule,
     MessagesModule,
+    GatewayModule,
   ],
 })
 export class AppModule {}
