@@ -6,6 +6,6 @@ import { RoomMemberGuard } from './guards/room-member.guard.js';
 @Module({
   controllers: [RoomsController],
   providers: [RoomsService, RoomMemberGuard],
-  exports: [RoomMemberGuard],
+  exports: [RoomsService, RoomMemberGuard],
 })
 export class RoomsModule {}
