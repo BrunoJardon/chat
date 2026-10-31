@@ -12,6 +12,7 @@ export const EVENT_NAMES = {
   server: {
     newMessage: 'message:new',
     typingUpdate: 'typing:update',
+    presenceUpdate: 'presence:update',
     error: 'event:error',
   },
 } as const;
@@ -25,6 +26,13 @@ export interface ClientJoinRoomEvent {
 }
 
 export type ClientLeaveRoomEvent = ClientJoinRoomEvent;
+
+export type PresenceStatus = 'online' | 'offline';
+export interface ServerPresenceEvent {
+  readonly userId: string;
+  readonly status: PresenceStatus;
+  readonly lastSeen: string | null;
+}
 
 export interface ClientSendMessageEvent {
   readonly roomId: string;
