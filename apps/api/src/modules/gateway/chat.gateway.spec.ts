@@ -27,16 +27,32 @@ function makeMessages() {
 }
 
 function makeSocket(overrides: Partial<any> = {}) {
+  const roomsSet = new Set<string>();
   const socket: any = {
     id: 'socket-1',
     handshake: { auth: {}, headers: {} },
-    data: {},
+    data: { userId: USER_ID },
     emit: vi.fn(),
     disconnect: vi.fn(),
-    join: vi.fn().mockResolvedValue(undefined),
-    leave: vi.fn().mockResolvedValue(undefined),
+    join: vi.fn().mockImplementation((roomId: string) => {
+      roomsSet.add(roomId);
+      return Promise.resolve();
+    }),
+    leave: vi.fn().mockImplementation((roomId: string) => {
+      roomsSet.delete(roomId);
+      return Promise.resolve();
+    }),
+    rooms: roomsSet,
+    to: vi.fn().mockReturnValue({ emit: vi.fn() }),
     ...overrides,
   };
+
+  if (overrides.rooms instanceof Set) {
+    socket.rooms = overrides.rooms;
+  } else if (Array.isArray(overrides.rooms)) {
+    socket.rooms = new Set(overrides.rooms);
+  }
+
   return socket;
 }
 
@@ -64,7 +80,7 @@ describe('ChatGateway', () => {
 
   describe('handleConnection', () => {
     it('emits UNAUTHORIZED and disconnects when no token is provided', async () => {
-      const socket = makeSocket();
+      const socket = makeSocket({ data: {}, handshake: { auth: {}, headers: {} } });
 
       await gateway.handleConnection(socket);
 
@@ -147,6 +163,59 @@ describe('ChatGateway', () => {
       await gateway.handleLeaveRoom(socket, { roomId: ROOM_ID });
 
       expect(socket.leave).toHaveBeenCalledWith(ROOM_ID);
+    });
+  });
+
+  describe('handleClientIsTyping', () => {
+    it('emits typing:update to the other members in the room', async () => {
+      const socket = makeSocket({ data: { userId: USER_ID }, rooms: new Set([ROOM_ID]) });
+      const emit = vi.fn();
+      (socket as any).to = vi.fn().mockReturnValue({ emit });
+
+      await gateway.handleClientIsTyping(socket, { roomId: ROOM_ID, isTyping: true });
+
+      expect((socket as any).to).toHaveBeenCalledWith(ROOM_ID);
+      expect(emit).toHaveBeenCalledWith(
+        EVENT_NAMES.server.typingUpdate,
+        expect.objectContaining({
+          roomId: ROOM_ID,
+          userId: USER_ID,
+          isTyping: true,
+        }),
+      );
+      expect(socket.emit).not.toHaveBeenCalled();
+    });
+
+    it('emits typing:update with isTyping false', async () => {
+      const socket = makeSocket({ data: { userId: USER_ID }, rooms: new Set([ROOM_ID]) });
+      const emit = vi.fn();
+      (socket as any).to = vi.fn().mockReturnValue({ emit });
+
+      await gateway.handleClientIsTyping(socket, { roomId: ROOM_ID, isTyping: false });
+
+      expect(emit).toHaveBeenCalledWith(
+        EVENT_NAMES.server.typingUpdate,
+        expect.objectContaining({
+          roomId: ROOM_ID,
+          userId: USER_ID,
+          isTyping: false,
+        }),
+      );
+    });
+
+    it('emits NOT_ROOM_MEMBER and does not broadcast when not in the room', async () => {
+      const socket = makeSocket({ data: { userId: USER_ID }, rooms: new Set() });
+      const toEmit = vi.fn();
+      (socket as any).to = vi.fn().mockReturnValue({ emit: toEmit });
+
+      await gateway.handleClientIsTyping(socket, { roomId: ROOM_ID, isTyping: true });
+
+      expect((socket as any).to).not.toHaveBeenCalled();
+      expect(toEmit).not.toHaveBeenCalled();
+      expect(socket.emit).toHaveBeenCalledWith(
+        EVENT_NAMES.server.error,
+        expect.objectContaining({ code: 'NOT_ROOM_MEMBER' }),
+      );
     });
   });
 

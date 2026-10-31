@@ -7,13 +7,19 @@ import {
   WebSocketServer,
 } from '@nestjs/websockets';
 import type { Server, Socket } from 'socket.io';
-import { EVENT_NAMES, type ServerErrorCodeEvent, type ServerNewMessageEvent } from '@chat/types';
+import {
+  EVENT_NAMES,
+  ServerParticipantIsTypingEvent,
+  type ServerErrorCodeEvent,
+  type ServerNewMessageEvent,
+} from '@chat/types';
 import { Public } from '../auth/decorators/public.decorator.js';
 import { JwtService } from '../auth/jwt/jwt.service.js';
 import { MessagesService } from '../messages/messages.service.js';
 import { RoomsService } from '../rooms/rooms.service.js';
 import { ClientSendMessageEventDto } from './dto/client-send-message.dto.js';
 import { ClientJoinRoomEventDto, ClientLeaveRoomEventDto } from './dto/join-leave-room.dto.js';
+import { ClientIsTypingDto } from './dto/client-is-typing.dto.js';
 
 @Public()
 @WebSocketGateway({
@@ -71,6 +77,7 @@ export class ChatGateway {
 
     const isMember = await this.rooms.isMember(body.roomId, userId);
     if (!isMember) {
+      console.log(socket.data.userId);
       socket.emit(EVENT_NAMES.server.error, {
         code: 'NOT_ROOM_MEMBER',
       } satisfies ServerErrorCodeEvent);
@@ -86,6 +93,26 @@ export class ChatGateway {
     @MessageBody() body: ClientLeaveRoomEventDto,
   ): Promise<void> {
     await socket.leave(body.roomId);
+  }
+
+  @SubscribeMessage(EVENT_NAMES.client.typingSet)
+  async handleClientIsTyping(
+    @ConnectedSocket() socket: Socket,
+    @MessageBody() body: ClientIsTypingDto,
+  ): Promise<void> {
+    console.log(socket.rooms.has(body.roomId));
+    if (!socket.rooms.has(body.roomId)) {
+      socket.emit(EVENT_NAMES.server.error, {
+        code: 'NOT_ROOM_MEMBER',
+      } satisfies ServerErrorCodeEvent);
+      return;
+    }
+
+    socket.to(body.roomId).emit(EVENT_NAMES.server.typingUpdate, {
+      roomId: body.roomId,
+      userId: socket.data.userId,
+      isTyping: body.isTyping,
+    } satisfies ServerParticipantIsTypingEvent);
   }
 
   @SubscribeMessage(EVENT_NAMES.client.sendMessage)
