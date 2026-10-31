@@ -4,9 +4,11 @@ import { ChatGateway } from './chat.gateway.js';
 import type { JwtService } from '../auth/jwt/jwt.service.js';
 import type { MessagesService } from '../messages/messages.service.js';
 import type { RoomsService } from '../rooms/rooms.service.js';
+import type { PresenceService } from './presence.service.js';
 
 const USER_ID = '11111111-1111-4111-8111-111111111111';
 const ROOM_ID = '22222222-2222-4222-8222-222222222222';
+const ROOM_ID_2 = '44444444-4444-4444-8444-444444444444';
 
 function makeJwt() {
   return {
@@ -17,12 +19,23 @@ function makeJwt() {
 function makeRooms() {
   return {
     isMember: vi.fn(),
+    listRooms: vi.fn(),
   };
 }
 
 function makeMessages() {
   return {
     createMessage: vi.fn(),
+  };
+}
+
+function makePresence() {
+  return {
+    setOnline: vi.fn(),
+    setOffline: vi.fn(),
+    getPresence: vi.fn(),
+    getSocketIds: vi.fn(),
+    refresh: vi.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -61,16 +74,19 @@ describe('ChatGateway', () => {
   let jwt: ReturnType<typeof makeJwt>;
   let rooms: ReturnType<typeof makeRooms>;
   let messages: ReturnType<typeof makeMessages>;
+  let presence: ReturnType<typeof makePresence>;
 
   beforeEach(() => {
     jwt = makeJwt();
     rooms = makeRooms();
     messages = makeMessages();
+    presence = makePresence();
 
     gateway = new ChatGateway(
       jwt as unknown as JwtService,
       messages as unknown as MessagesService,
       rooms as unknown as RoomsService,
+      presence as unknown as PresenceService,
     );
   });
 
@@ -95,11 +111,13 @@ describe('ChatGateway', () => {
     it('accepts token from handshake.auth', async () => {
       const socket = makeSocket({ handshake: { auth: { token: 'access-token' }, headers: {} } });
       jwt.verifyAccess.mockResolvedValue({ payload: { sub: USER_ID } });
+      presence.setOnline.mockResolvedValue(null);
 
       await gateway.handleConnection(socket);
 
       expect(jwt.verifyAccess).toHaveBeenCalledWith('access-token');
       expect(socket.data.userId).toBe(USER_ID);
+      expect(presence.setOnline).toHaveBeenCalledWith(USER_ID, socket.id);
       expect(socket.emit).not.toHaveBeenCalled();
       expect(socket.disconnect).not.toHaveBeenCalled();
     });
@@ -107,11 +125,13 @@ describe('ChatGateway', () => {
     it('accepts token from handshake.headers for Postman compatibility', async () => {
       const socket = makeSocket({ handshake: { auth: {}, headers: { token: 'header-token' } } });
       jwt.verifyAccess.mockResolvedValue({ payload: { sub: USER_ID } });
+      presence.setOnline.mockResolvedValue(null);
 
       await gateway.handleConnection(socket);
 
       expect(jwt.verifyAccess).toHaveBeenCalledWith('header-token');
       expect(socket.data.userId).toBe(USER_ID);
+      expect(presence.setOnline).toHaveBeenCalledWith(USER_ID, socket.id);
       expect(socket.disconnect).not.toHaveBeenCalled();
     });
 
@@ -126,6 +146,178 @@ describe('ChatGateway', () => {
         expect.objectContaining({ code: 'UNAUTHORIZED' }),
       );
       expect(socket.disconnect).toHaveBeenCalledWith(true);
+      expect(presence.setOnline).not.toHaveBeenCalled();
+    });
+
+    it('broadcasts presence to all user rooms on transition to online', async () => {
+      const socket = makeSocket({ handshake: { auth: { token: 'access-token' }, headers: {} } });
+      const event = { userId: USER_ID, status: 'online', lastSeen: null };
+      const emit = vi.fn();
+      const to = vi.fn().mockReturnValue({ emit });
+      (gateway as any).io = { to, sockets: { sockets: new Map() } };
+
+      jwt.verifyAccess.mockResolvedValue({ payload: { sub: USER_ID } });
+      presence.setOnline.mockResolvedValue(event);
+      rooms.listRooms.mockResolvedValue([
+        { id: ROOM_ID, type: 'private', participants: [] },
+        { id: ROOM_ID_2, type: 'private', participants: [] },
+      ] as any);
+
+      await gateway.handleConnection(socket);
+
+      expect(presence.setOnline).toHaveBeenCalledWith(USER_ID, socket.id);
+      expect(rooms.listRooms).toHaveBeenCalledWith(USER_ID);
+      expect(to).toHaveBeenCalledTimes(2);
+      expect(to).toHaveBeenCalledWith(ROOM_ID);
+      expect(to).toHaveBeenCalledWith(ROOM_ID_2);
+      expect(emit).toHaveBeenCalledTimes(2);
+      expect(emit).toHaveBeenCalledWith(EVENT_NAMES.server.presenceUpdate, event);
+    });
+
+    it('does not broadcast when setOnline returns null (already online)', async () => {
+      const socket = makeSocket({ handshake: { auth: { token: 'access-token' }, headers: {} } });
+      const emit = vi.fn();
+      const to = vi.fn().mockReturnValue({ emit });
+      (gateway as any).io = { to };
+
+      jwt.verifyAccess.mockResolvedValue({ payload: { sub: USER_ID } });
+      presence.setOnline.mockResolvedValue(null);
+
+      await gateway.handleConnection(socket);
+
+      expect(presence.setOnline).toHaveBeenCalledWith(USER_ID, socket.id);
+      expect(rooms.listRooms).not.toHaveBeenCalled();
+      expect(to).not.toHaveBeenCalled();
+      expect(emit).not.toHaveBeenCalled();
+    });
+
+    it('emits INTERNAL_ERROR and disconnects when presence fails', async () => {
+      const socket = makeSocket({ handshake: { auth: { token: 'access-token' }, headers: {} } });
+      jwt.verifyAccess.mockResolvedValue({ payload: { sub: USER_ID } });
+      presence.setOnline.mockRejectedValue(new Error('redis down'));
+
+      await gateway.handleConnection(socket);
+
+      expect(socket.emit).toHaveBeenCalledWith(
+        EVENT_NAMES.server.error,
+        expect.objectContaining({ code: 'INTERNAL_ERROR' }),
+      );
+      expect(socket.disconnect).toHaveBeenCalledWith(true);
+    });
+  });
+
+  describe('handleDisconnect', () => {
+    it('broadcasts presence offline when last socket disconnects', async () => {
+      const socket = makeSocket({ data: { userId: USER_ID } });
+      const event = { userId: USER_ID, status: 'offline', lastSeen: '2026-10-31T00:00:00.000Z' };
+      const emit = vi.fn();
+      const to = vi.fn().mockReturnValue({ emit });
+      (gateway as any).io = { to };
+
+      presence.setOffline.mockResolvedValue(event);
+      rooms.listRooms.mockResolvedValue([
+        { id: ROOM_ID, type: 'private', participants: [] },
+      ] as any);
+
+      await gateway.handleDisconnect(socket);
+
+      expect(presence.setOffline).toHaveBeenCalledWith(USER_ID, socket.id);
+      expect(rooms.listRooms).toHaveBeenCalledWith(USER_ID);
+      expect(to).toHaveBeenCalledWith(ROOM_ID);
+      expect(emit).toHaveBeenCalledWith(EVENT_NAMES.server.presenceUpdate, event);
+    });
+
+    it('does not broadcast when other sockets remain', async () => {
+      const socket = makeSocket({ data: { userId: USER_ID } });
+      const emit = vi.fn();
+      const to = vi.fn().mockReturnValue({ emit });
+      (gateway as any).io = { to };
+
+      presence.setOffline.mockResolvedValue(null);
+
+      await gateway.handleDisconnect(socket);
+
+      expect(presence.setOffline).toHaveBeenCalledWith(USER_ID, socket.id);
+      expect(rooms.listRooms).not.toHaveBeenCalled();
+      expect(to).not.toHaveBeenCalled();
+    });
+
+    it('does nothing when socket has no userId', async () => {
+      const socket = makeSocket({ data: {} });
+
+      await gateway.handleDisconnect(socket);
+
+      expect(presence.setOffline).not.toHaveBeenCalled();
+    });
+
+    it('logs error when setOffline fails', async () => {
+      const socket = makeSocket({ data: { userId: USER_ID } });
+      const loggerError = vi.spyOn((gateway as any).logger, 'error').mockImplementation(() => {});
+      presence.setOffline.mockRejectedValue(new Error('redis down'));
+
+      await gateway.handleDisconnect(socket);
+
+      expect(loggerError).toHaveBeenCalled();
+      loggerError.mockRestore();
+    });
+  });
+
+  describe('onApplicationBootstrap', () => {
+    it('starts a timer that refreshes connected sockets', async () => {
+      vi.useFakeTimers();
+      const sockets = new Map([
+        ['s1', {}],
+        ['s2', {}],
+      ]);
+      (gateway as any).io = { sockets: { sockets } };
+
+      try {
+        gateway.onApplicationBootstrap();
+
+        expect((gateway as any).refreshTimer).toBeDefined();
+        await vi.advanceTimersByTimeAsync(30000);
+
+        expect(presence.refresh).toHaveBeenCalledWith(['s1', 's2']);
+      } finally {
+        gateway.onApplicationShutdown();
+        vi.useRealTimers();
+      }
+    });
+
+    it('logs error when refresh fails', async () => {
+      vi.useFakeTimers();
+      const sockets = new Map([['s1', {}]]);
+      (gateway as any).io = { sockets: { sockets } };
+      const loggerError = vi.spyOn((gateway as any).logger, 'error').mockImplementation(() => {});
+      presence.refresh.mockRejectedValue(new Error('boom'));
+
+      try {
+        gateway.onApplicationBootstrap();
+        await vi.advanceTimersByTimeAsync(30000);
+        await Promise.resolve();
+
+        expect(loggerError).toHaveBeenCalled();
+      } finally {
+        loggerError.mockRestore();
+        gateway.onApplicationShutdown();
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  describe('onApplicationShutdown', () => {
+    it('clears the refresh timer', () => {
+      vi.useFakeTimers();
+      (gateway as any).io = { sockets: { sockets: new Map() } };
+
+      gateway.onApplicationBootstrap();
+      const timer = (gateway as any).refreshTimer;
+      expect(timer).toBeDefined();
+
+      gateway.onApplicationShutdown();
+      expect((gateway as any).refreshTimer).toBeUndefined();
+
+      vi.useRealTimers();
     });
   });
 
