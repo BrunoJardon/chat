@@ -1,7 +1,14 @@
-import { BadRequestException, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  Logger,
+  OnApplicationBootstrap,
+  OnApplicationShutdown,
+} from '@nestjs/common';
 import {
   ConnectedSocket,
   MessageBody,
+  OnGatewayConnection,
+  OnGatewayDisconnect,
   SubscribeMessage,
   WebSocketGateway,
   WebSocketServer,
@@ -10,6 +17,7 @@ import type { Server, Socket } from 'socket.io';
 import {
   EVENT_NAMES,
   ServerParticipantIsTypingEvent,
+  ServerPresenceEvent,
   type ServerErrorCodeEvent,
   type ServerNewMessageEvent,
 } from '@chat/types';
@@ -20,6 +28,8 @@ import { RoomsService } from '../rooms/rooms.service.js';
 import { ClientSendMessageEventDto } from './dto/client-send-message.dto.js';
 import { ClientJoinRoomEventDto, ClientLeaveRoomEventDto } from './dto/join-leave-room.dto.js';
 import { ClientIsTypingDto } from './dto/client-is-typing.dto.js';
+import { PresenceService } from './presence.service.js';
+import { PRESENCE_REFRESH_INTERVAL_MS } from './gateway.constants.js';
 
 @Public()
 @WebSocketGateway({
@@ -27,8 +37,11 @@ import { ClientIsTypingDto } from './dto/client-is-typing.dto.js';
   pingInterval: 60000,
   pingTimeout: 45000,
 })
-export class ChatGateway {
+export class ChatGateway
+  implements OnGatewayConnection, OnGatewayDisconnect, OnApplicationBootstrap, OnApplicationShutdown
+{
   private readonly logger = new Logger(ChatGateway.name);
+  private refreshTimer?: NodeJS.Timeout;
 
   @WebSocketServer()
   private readonly io!: Server;
@@ -37,7 +50,24 @@ export class ChatGateway {
     private readonly jwt: JwtService,
     private readonly messages: MessagesService,
     private readonly rooms: RoomsService,
+    private readonly presence: PresenceService,
   ) {}
+
+  onApplicationBootstrap(): void {
+    this.refreshTimer = setInterval(() => {
+      void this.presence
+        .refresh([...this.io.sockets.sockets.keys()])
+        .catch((err: unknown) => this.logger.error(`[presence] refresh failed: ${String(err)}`));
+    }, PRESENCE_REFRESH_INTERVAL_MS);
+    this.refreshTimer.unref();
+  }
+
+  onApplicationShutdown(): void {
+    if (this.refreshTimer) {
+      clearInterval(this.refreshTimer);
+      this.refreshTimer = undefined;
+    }
+  }
 
   async handleConnection(socket: Socket): Promise<void> {
     // using the auth token in the headers for Postman compatibility (temporary as frontend client)
@@ -45,7 +75,6 @@ export class ChatGateway {
       socket.handshake.auth?.token || socket.handshake.headers?.token;
 
     if (typeof userAccessToken !== 'string' || userAccessToken.length === 0) {
-      console.log('[invalid type]');
       socket.emit(EVENT_NAMES.server.error, {
         code: 'UNAUTHORIZED',
       });
@@ -59,9 +88,21 @@ export class ChatGateway {
       userId = payload.sub;
       socket.data.userId = userId;
     } catch {
-      console.log('[invalid token]');
       socket.emit(EVENT_NAMES.server.error, {
         code: 'UNAUTHORIZED',
+      } satisfies ServerErrorCodeEvent);
+      socket.disconnect(true);
+      return;
+    }
+
+    try {
+      const event = await this.presence.setOnline(userId, socket.id);
+      if (event) {
+        await this.broadcastPresence(userId, event);
+      }
+    } catch {
+      socket.emit(EVENT_NAMES.server.error, {
+        code: 'INTERNAL_ERROR',
       } satisfies ServerErrorCodeEvent);
       socket.disconnect(true);
       return;
@@ -100,7 +141,6 @@ export class ChatGateway {
     @ConnectedSocket() socket: Socket,
     @MessageBody() body: ClientIsTypingDto,
   ): Promise<void> {
-    console.log(socket.rooms.has(body.roomId));
     if (!socket.rooms.has(body.roomId)) {
       socket.emit(EVENT_NAMES.server.error, {
         code: 'NOT_ROOM_MEMBER',
@@ -148,6 +188,29 @@ export class ChatGateway {
           code: 'INTERNAL_ERROR',
         } satisfies ServerErrorCodeEvent);
       }
+    }
+  }
+
+  async handleDisconnect(socket: Socket): Promise<void> {
+    const userId: string | undefined = socket.data.userId;
+    if (!userId) {
+      return;
+    }
+
+    try {
+      const event = await this.presence.setOffline(userId, socket.id);
+      if (event) {
+        await this.broadcastPresence(userId, event);
+      }
+    } catch (err) {
+      this.logger.error(`[presence] setOffline failed for socket ${socket.id}: ${String(err)}`);
+    }
+  }
+
+  private async broadcastPresence(userId: string, event: ServerPresenceEvent): Promise<void> {
+    const rooms = await this.rooms.listRooms(userId);
+    for (const room of rooms) {
+      this.io.to(room.id).emit(EVENT_NAMES.server.presenceUpdate, event);
     }
   }
 }

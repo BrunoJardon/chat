@@ -1,0 +1,2 @@
+export const SOCKET_TTL_SECONDS = 60;
+export const PRESENCE_REFRESH_INTERVAL_MS = 30_000;
