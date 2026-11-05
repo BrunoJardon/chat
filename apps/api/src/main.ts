@@ -18,6 +18,7 @@ async function bootstrap() {
   app.enableShutdownHooks();
   app.useWebSocketAdapter(new IoAdapter(app));
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+  app.setGlobalPrefix('api');
 
   const config = app.get(ConfigService);
   const host = config.getOrThrow<string>('API_HOST');
