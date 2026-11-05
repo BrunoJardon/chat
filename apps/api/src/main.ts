@@ -1,11 +1,18 @@
 import { NestFactory } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
 import { ValidationPipe } from '@nestjs/common';
+import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { IoAdapter } from '@nestjs/platform-socket.io';
 import { AppModule } from './app.module.js';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+
+  if (process.env.NODE_ENV !== 'prod') {
+    const swaggerConfig = new DocumentBuilder().setTitle('Chat API').build();
+    const documentFactory = () => SwaggerModule.createDocument(app, swaggerConfig);
+    SwaggerModule.setup('api/docs', app, documentFactory);
+  }
 
   app.enableCors();
   app.enableShutdownHooks();

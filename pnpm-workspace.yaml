@@ -9,4 +9,5 @@ allowBuilds:
   "@prisma/adapter-pg": true
   "@prisma/client": true
   "@prisma/engines": true
+  "@scarf/scarf": true
   prisma: true
