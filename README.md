@@ -145,10 +145,10 @@ pnpm run dev
 
 Once both are running:
 
-- API: `http://localhost:3000/api`
-- Swagger UI: `http://localhost:3000/api/docs`
-- Health check: `http://localhost:3000/api/health`
-- Web: `http://localhost:3001`
+- API: `http://localhost:3100/api`
+- Swagger UI: `http://localhost:3100/api/docs`
+- Health check: `http://localhost:3100/api/health`
+- Web: `http://localhost:3000`
 
 ## Environment Variables
 
@@ -156,9 +156,7 @@ Once both are running:
 | -------------------- | ---------------------------------------------------- | ----------- |
 | `NODE_ENV`           | Runtime environment (`dev`, `prod`, `test`)          | `dev`       |
 | `API_HOST`           | API bind host                                        | `localhost` |
-| `API_PORT`           | API port                                             | `3000`      |
-| `WEB_HOST`           | Reserved for the web app                             | `localhost` |
-| `WEB_PORT`           | Reserved; not consumed yet                           | `3001`      |
+| `API_PORT`           | API port                                             | `3100`      |
 | `JWT_ACCESS_SECRET`  | Access-token signing secret (minimum 32 characters)  | —           |
 | `JWT_REFRESH_SECRET` | Refresh-token signing secret (minimum 32 characters) | —           |
 | `JWT_ACCESS_TTL`     | Access-token lifetime                                | `15m`       |
@@ -200,7 +198,7 @@ Message pagination accepts `before=<messageId>` and `limit` (1–50).
 Connect to the Socket.IO server using the API host and port. Authenticate the handshake with the access token in either `auth.token` or the `token` header:
 
 ```ts
-io("http://localhost:3000", {
+io("http://localhost:3100", {
   auth: { token: accessToken },
 });
 ```
